@@ -9,3 +9,5 @@ Installation
 ------------
 
     raco pkg install git://github.com/eriknyh/msgpack-racket?path=msgpack
+
+[MessagePack]:http://msgpack.org/
