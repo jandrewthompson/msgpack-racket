@@ -160,7 +160,10 @@
       [(= fb format:uint16) (msgpack-read-int 2 in)]
       [(= fb format:uint32) (msgpack-read-int 4 in)]
       [(= fb format:uint64) (msgpack-read-int 8 in)]
-      [(= fb format:int8) (- (add1 (bitwise-and 255 (bitwise-not (read-byte in)))))]
+      [(= fb format:int8) (let ([x (read-byte in)])
+                            (if (>= x #x80)
+                              (- (add1 (bitwise-and 255 (bitwise-not x))))
+                              x))]
       [(= fb format:int16) (msgpack-read-int 2 in #t)]
       [(= fb format:int32) (msgpack-read-int 4 in #t)]
       [(= fb format:int64) (msgpack-read-int 8 in #t)]
