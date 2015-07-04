@@ -90,8 +90,7 @@
                                      "bytestring too long"
                                      "(bytes-length bstr)" len)]))
 
-(define (msgpack-write-array-head x out)
-  (define len (length x))
+(define (msgpack-write-array-head len out)
   (cond
     [(<= len #xF) (write-byte (+ format:min-fixarray len) out)]
     [(<= len #xFFff) (write-byte format:array16 out) (write-int-bytes len 2 #f out)]
@@ -117,7 +116,8 @@
                               (write-bytes (real->floating-point-bytes x 8 #t) out)]
           [(string? x) (msgpack-write-string x out)]
           [(bytes? x) (msgpack-write-bytes x out)]
-          [(list? x) (msgpack-write-array-head x out) (for ([e x]) (recurse e))]
+          [(vector? x) (msgpack-write-array-head (vector-length x) out) (for ([e x]) (recurse e))]
+          [(list? x) (msgpack-write-array-head (length x) out) (for ([e x]) (recurse e))]
           [(hash? x) (msgpack-write-map-head x out) (for ([(k v) (in-hash x)]) (recurse k) (recurse v))]
           [else (raise-arguments-error 'write-msgpack
                                        "expected x where: (msgpack-expr? x)"
