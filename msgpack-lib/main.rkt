@@ -2,50 +2,41 @@
 
 ;; The module provides parsing and serialization for MessagePack.
 
-(require racket/contract/base)
-
-(provide
-  (contract-out
-    ;; Check if a Racket value can be serialized to MessagePack.
-    [msgpack-expr? (->* (any/c) (#:nil any/c) any)]
-    ;; The value used to represent MessagePack nil.
-    [msgpack-nil (parameter/c any/c)]
-    ;; Write the given value serialized as MessagePack to the port.
-    [msgpack-write (->* (any/c) (output-port? #:nil any/c) any)]
-    ;; Create a byte string with the given value formatted as MessagePack.
-    [msgpack-pack (->* (any/c) (#:nil any/c) bytes?)]
-    ;; Read a MessagePack value from the port.
-    [msgpack-read (->* () (input-port? #:nil any/c) (or/c msgpack-expr? eof-object?))]
-    ;; Read a MessagePack value from the byte string.
-    [msgpack-unpack (->* (bytes?) (#:nil any/c) msgpack-expr?)]))
-
-(require "format-bytes.rkt")
-
-;; -------------
-;; Customization
+(require racket/contract/base
+         racket/dict)
 
 (define msgpack-nil (make-parameter 'nil))
 
-;; ---------
-;; Predicate
+(define msgpack-expr/c
+  (flat-rec-contract expr
+    (or/c (integer-in (- (expt 2 63)) (sub1 (expt 2 64)))
+          single-flonum?
+          double-flonum?
+          boolean?
+          ;; This check is not exhaustive as strings and byte strings taking more than 2^32 - 1
+          ;; bytes return #t.
+          string?
+          bytes?
+          (msgpack-nil)
+          (vectorof expr #:flat? #t)
+          (listof expr)
+          (hash/c expr expr #:flat? #t))))
 
-(define (msgpack-expr? x #:nil [nil (msgpack-nil)])
-  (let check ([x x])
-    (or (and (exact-integer? x)
-             (>= x (- (expt 2 63)))
-             (<= x (sub1 (expt 2 64))))
-        (double-flonum? x)
-        (single-flonum? x)
-        (boolean? x)
-        ;; This check is not exhaustive as strings and byte strings taking more than 2^32 - 1
-        ;; bytes return #t.
-        (string? x)
-        (bytes? x)
-        (eq? x nil)
-        (and (list? x) (andmap check x))
-        (and (hash? x)
-             (for/and ([(k v) (in-hash x)])
-               (and (check k) (check v)))))))
+(provide
+  (contract-out
+    [msgpack-expr/c flat-contract?]
+    ;; The value used to represent MessagePack nil.
+    [msgpack-nil (parameter/c any/c)]
+    ;; Write the given value serialized as MessagePack to the port.
+    [msgpack-write (-> msgpack-expr/c output-port? any)]
+    ;; Create a byte string with the given value formatted as MessagePack.
+    [msgpack-pack (-> msgpack-expr/c bytes?)]
+    ;; Read a MessagePack value from the port.
+    [msgpack-read (-> input-port? (or/c msgpack-expr/c eof-object?))]
+    ;; Read a MessagePack value from the byte string.
+    [msgpack-unpack (-> bytes? msgpack-expr/c)]))
+
+(require "format-bytes.rkt")
 
 ;; ----------------
 ;; Writing to ports
@@ -115,9 +106,9 @@
     [(<= len #xFFffFFff) (write-byte format:map32 out) (write-int-bytes len 4 #f out)]
     [else (raise-arguments-error 'msgpack-write-map-head "")]))
 
-(define (msgpack-write x [out (current-output-port)] #:nil [nil (msgpack-nil)])
+(define (msgpack-write x out)
   (let recurse ([x x])
-    (cond [(eq? x nil) (write-byte format:nil out)]
+    (cond [(eq? x (msgpack-nil)) (write-byte format:nil out)]
           [(boolean? x) (write-byte (if x format:true format:false) out)]
           [(exact-integer? x) (msgpack-write-int x out)]
           [(single-flonum? x) (write-byte format:float32 out)
@@ -132,9 +123,9 @@
                                        "expected x where: (msgpack-expr? x)"
                                        "x" x)])))
 
-(define (msgpack-pack x #:nil [nil (msgpack-nil)])
+(define (msgpack-pack x)
   (define ret (open-output-bytes))
-  (msgpack-write x ret #:nil nil)
+  (msgpack-write x ret)
   (get-output-bytes ret))
 
 ;; ------------------
@@ -143,17 +134,17 @@
 (define (msgpack-read-int byte-count in [signed #f])
   (integer-bytes->integer (read-bytes byte-count in) signed #t))
 
-(define (msgpack-read [in (current-input-port)] #:nil [nil (msgpack-nil)])
+(define (msgpack-read in)
   (let ([fb (read-byte in)])
     (cond
       [(<= fb format:max-pos-fixint) fb]
       [(<= fb format:max-fixmap) (for/hash ([i (in-range (- fb format:min-fixmap))])
-                                   (values (msgpack-read in #:nil nil)
-                                           (msgpack-read in #:nil nil)))]
+                                   (values (msgpack-read in)
+                                           (msgpack-read in)))]
       [(<= fb format:max-fixarray) (for/list ([i (in-range (- fb format:min-fixarray))])
-                                     (msgpack-read in #:nil nil))]
+                                     (msgpack-read in))]
       [(<= fb format:max-fixstr) (bytes->string/utf-8 (read-bytes (- fb format:min-fixstr) in))]
-      [(= fb format:nil) nil]
+      [(= fb format:nil) (msgpack-nil)]
       [(= fb format:false) #f]
       [(= fb format:true) #t]
       [(= fb format:uint8) (read-byte in)]
@@ -176,19 +167,19 @@
       [(= fb format:bin16) (read-bytes (msgpack-read-int 2 in) in)]
       [(= fb format:bin32) (read-bytes (msgpack-read-int 4 in) in)]
       [(= fb format:array16) (for/list ([i (in-range (msgpack-read-int 2 in))])
-                                    (msgpack-read in #:nil nil))]
+                                    (msgpack-read in))]
       [(= fb format:array32) (for/list ([i (in-range (msgpack-read-int 4 in))])
-                                    (msgpack-read in #:nil nil))]
+                                    (msgpack-read in))]
       [(= fb format:map16) (for/hash ([i (in-range (msgpack-read-int 2 in))])
-                                  (values (msgpack-read in #:nil nil)
-                                          (msgpack-read in #:nil nil)))]
+                                  (values (msgpack-read in)
+                                          (msgpack-read in)))]
       [(= fb format:map32) (for/hash ([i (in-range (msgpack-read-int 4 in))])
-                                  (values (msgpack-read in #:nil nil)
-                                          (msgpack-read in #:nil nil)))]
+                                  (values (msgpack-read in)
+                                          (msgpack-read in)))]
       [(and (>= fb format:min-neg-fixint) (<= fb format:max-neg-fixint))
        (- (add1 (bitwise-and 255 (bitwise-not fb))))]
       [(eof-object? fb) fb])))
 
 (define (msgpack-unpack bstr #:nil [nil (msgpack-nil)])
   (define in (open-input-bytes bstr))
-  (msgpack-read in #:nil nil))
+  (msgpack-read in))
