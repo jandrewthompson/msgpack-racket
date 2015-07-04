@@ -138,6 +138,19 @@
     (lambda (len) (make-list len 0))
     (lambda (lst) (make-bytes (length lst)))
     ;; fixarray
+    [#:pack 0 #"\x90"]
+    [#:pack #xF #"\x9F"]
+    ;; array 16
+    [#:pack #x10 #"\xDC\x00\x10"]
+    [#:pack #xFFFF #"\xDC\xFF\xFF"]
+    ;; array 32
+    [#:pack #x10000 #"\xDD\x00\x01\x00\x00"]))
+
+(test-begin
+  (check-containers
+    (lambda (len) (make-vector len 0))
+    (lambda (vec) (make-bytes (vector-length vec)))
+    ;; fixarray
     [0 #"\x90"]
     [#xF #"\x9F"]
     ;; array 16
@@ -147,16 +160,3 @@
     ;; array 32
     [#:unpack 0 #"\xDD\x00\x00\x00\x00"]
     [#x10000 #"\xDD\x00\x01\x00\x00"]))
-
-(test-begin
-  (check-containers
-    (lambda (len) (make-vector len 0))
-    (lambda (vec) (make-bytes (vector-length vec)))
-    ;; fixarray
-    [#:pack 0 #"\x90"]
-    [#:pack #xF #"\x9F"]
-    ;; array 16
-    [#:pack #x10 #"\xDC\x00\x10"]
-    [#:pack #xFFFF #"\xDC\xFF\xFF"]
-    ;; array 32
-    [#:pack #x10000 #"\xDD\x00\x01\x00\x00"]))

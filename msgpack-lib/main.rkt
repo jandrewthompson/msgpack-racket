@@ -134,6 +134,9 @@
 (define (msgpack-read-int byte-count in [signed #f])
   (integer-bytes->integer (read-bytes byte-count in) signed #t))
 
+(define-syntax-rule (read-array-data len in)
+  (for/vector #:length len ([_ (in-naturals)]) (msgpack-read in)))
+
 (define (msgpack-read in)
   (let ([fb (read-byte in)])
     (cond
@@ -141,8 +144,7 @@
       [(<= fb format:max-fixmap) (for/hash ([i (in-range (- fb format:min-fixmap))])
                                    (values (msgpack-read in)
                                            (msgpack-read in)))]
-      [(<= fb format:max-fixarray) (for/list ([i (in-range (- fb format:min-fixarray))])
-                                     (msgpack-read in))]
+      [(<= fb format:max-fixarray) (read-array-data (- fb format:min-fixarray) in)]
       [(<= fb format:max-fixstr) (bytes->string/utf-8 (read-bytes (- fb format:min-fixstr) in))]
       [(= fb format:nil) (msgpack-nil)]
       [(= fb format:false) #f]
@@ -166,10 +168,8 @@
       [(= fb format:bin8) (read-bytes (read-byte in) in)]
       [(= fb format:bin16) (read-bytes (msgpack-read-int 2 in) in)]
       [(= fb format:bin32) (read-bytes (msgpack-read-int 4 in) in)]
-      [(= fb format:array16) (for/list ([i (in-range (msgpack-read-int 2 in))])
-                                    (msgpack-read in))]
-      [(= fb format:array32) (for/list ([i (in-range (msgpack-read-int 4 in))])
-                                    (msgpack-read in))]
+      [(= fb format:array16) (read-array-data (msgpack-read-int 2 in) in)]
+      [(= fb format:array32) (read-array-data (msgpack-read-int 4 in) in)]
       [(= fb format:map16) (for/hash ([i (in-range (msgpack-read-int 2 in))])
                                   (values (msgpack-read in)
                                           (msgpack-read in)))]
