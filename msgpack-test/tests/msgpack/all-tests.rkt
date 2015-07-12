@@ -160,3 +160,10 @@
     ;; array 32
     [#:unpack 0 #"\xDD\x00\x00\x00\x00"]
     [#x10000 #"\xDD\x00\x01\x00\x00"]))
+
+;; Incomplete reads
+;; ----------------
+
+(test-begin
+  (check-exn exn:fail? (lambda () (msgpack-unpack #"\x91")))
+  (check-exn exn:fail? (lambda () (msgpack-unpack #""))))

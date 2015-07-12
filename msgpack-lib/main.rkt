@@ -131,55 +131,76 @@
 ;; ------------------
 ;; Reading from ports
 
-(define (msgpack-read-int byte-count in [signed #f])
-  (integer-bytes->integer (read-bytes byte-count in) signed #t))
+(define (must-read-byte in)
+  (define b (read-byte in))
+  (if (eof-object? b)
+    (error 'must-read-byte "unexpected eof")
+    b))
+
+(define (must-read-bytes amt in)
+  (define bstr (read-bytes amt in))
+  (if (= (bytes-length bstr) amt)
+    bstr
+    (error 'must-read-bytes "failed to read ~a bytes from ~a" amt in)))
+
+(define (msgpack-must-read in)
+  (define v (msgpack-read in))
+  (if (eof-object? v)
+    (error 'msgpack-must-read "unexpected eof")
+    v))
+
+(define-syntax-rule (read-int-data len in)
+  (integer-bytes->integer (must-read-bytes len in) #t #t))
+
+(define-syntax-rule (read-uint-data len in)
+  (integer-bytes->integer (must-read-bytes len in) #f #t))
 
 (define-syntax-rule (read-array-data len in)
-  (for/vector #:length len ([_ (in-naturals)]) (msgpack-read in)))
+  (for/vector #:length len ([_ (in-naturals)]) (msgpack-must-read in)))
+
+(define-syntax-rule (read-map-data len in)
+  (for/hash ([_ (in-range len)]) (values (msgpack-must-read in) (msgpack-must-read in))))
+
+(define-syntax-rule (read-str-data len in)
+  (bytes->string/utf-8 (must-read-bytes len in)))
 
 (define (msgpack-read in)
-  (let ([fb (read-byte in)])
-    (cond
-      [(<= fb format:max-pos-fixint) fb]
-      [(<= fb format:max-fixmap) (for/hash ([i (in-range (- fb format:min-fixmap))])
-                                   (values (msgpack-read in)
-                                           (msgpack-read in)))]
-      [(<= fb format:max-fixarray) (read-array-data (- fb format:min-fixarray) in)]
-      [(<= fb format:max-fixstr) (bytes->string/utf-8 (read-bytes (- fb format:min-fixstr) in))]
-      [(= fb format:nil) (msgpack-nil)]
-      [(= fb format:false) #f]
-      [(= fb format:true) #t]
-      [(= fb format:uint8) (read-byte in)]
-      [(= fb format:uint16) (msgpack-read-int 2 in)]
-      [(= fb format:uint32) (msgpack-read-int 4 in)]
-      [(= fb format:uint64) (msgpack-read-int 8 in)]
-      [(= fb format:int8) (let ([x (read-byte in)])
-                            (if (>= x #x80)
-                              (- (add1 (bitwise-and 255 (bitwise-not x))))
-                              x))]
-      [(= fb format:int16) (msgpack-read-int 2 in #t)]
-      [(= fb format:int32) (msgpack-read-int 4 in #t)]
-      [(= fb format:int64) (msgpack-read-int 8 in #t)]
-      [(= fb format:float32) (floating-point-bytes->real (read-bytes 4 in) #t)]
-      [(= fb format:float64) (floating-point-bytes->real (read-bytes 8 in) #t)]
-      [(= fb format:str8) (bytes->string/utf-8 (read-bytes (read-byte in) in))]
-      [(= fb format:str16) (bytes->string/utf-8 (read-bytes (msgpack-read-int 2 in) in))]
-      [(= fb format:str32) (bytes->string/utf-8 (read-bytes (msgpack-read-int 4 in) in))]
-      [(= fb format:bin8) (read-bytes (read-byte in) in)]
-      [(= fb format:bin16) (read-bytes (msgpack-read-int 2 in) in)]
-      [(= fb format:bin32) (read-bytes (msgpack-read-int 4 in) in)]
-      [(= fb format:array16) (read-array-data (msgpack-read-int 2 in) in)]
-      [(= fb format:array32) (read-array-data (msgpack-read-int 4 in) in)]
-      [(= fb format:map16) (for/hash ([i (in-range (msgpack-read-int 2 in))])
-                                  (values (msgpack-read in)
-                                          (msgpack-read in)))]
-      [(= fb format:map32) (for/hash ([i (in-range (msgpack-read-int 4 in))])
-                                  (values (msgpack-read in)
-                                          (msgpack-read in)))]
-      [(and (>= fb format:min-neg-fixint) (<= fb format:max-neg-fixint))
-       (- (add1 (bitwise-and 255 (bitwise-not fb))))]
-      [(eof-object? fb) fb])))
+  (define fb (read-byte in))
+  (cond
+    [(<= fb format:max-pos-fixint) fb]
+    [(<= fb format:max-fixmap) (read-map-data (- fb format:min-fixmap) in)]
+    [(<= fb format:max-fixarray) (read-array-data (- fb format:min-fixarray) in)]
+    [(<= fb format:max-fixstr) (read-str-data (- fb format:min-fixstr) in)]
+    [(= fb format:nil) (msgpack-nil)]
+    [(= fb format:false) #f]
+    [(= fb format:true) #t]
+    [(= fb format:uint8) (must-read-byte in)]
+    [(= fb format:uint16) (read-uint-data 2 in)]
+    [(= fb format:uint32) (read-uint-data 4 in)]
+    [(= fb format:uint64) (read-uint-data 8 in)]
+    [(= fb format:int8) (let ([x (must-read-byte in)])
+                          (if (>= x #x80)
+                            (- (add1 (bitwise-and 255 (bitwise-not x))))
+                            x))]
+    [(= fb format:int16) (read-int-data 2 in)]
+    [(= fb format:int32) (read-int-data 4 in)]
+    [(= fb format:int64) (read-int-data 8 in)]
+    [(= fb format:float32) (floating-point-bytes->real (must-read-bytes 4 in) #t)]
+    [(= fb format:float64) (floating-point-bytes->real (must-read-bytes 8 in) #t)]
+    [(= fb format:str8) (read-str-data (must-read-byte in) in)]
+    [(= fb format:str16) (read-str-data (read-uint-data 2 in) in)]
+    [(= fb format:str32) (read-str-data (read-uint-data 4 in) in)]
+    [(= fb format:bin8) (must-read-bytes (must-read-byte in) in)]
+    [(= fb format:bin16) (must-read-bytes (read-uint-data 2 in) in)]
+    [(= fb format:bin32) (must-read-bytes (read-uint-data 4 in) in)]
+    [(= fb format:array16) (read-array-data (read-uint-data 2 in) in)]
+    [(= fb format:array32) (read-array-data (read-uint-data 4 in) in)]
+    [(= fb format:map16) (read-map-data (read-uint-data 2 in) in)]
+    [(= fb format:map32) (read-map-data (read-uint-data 4 in) in)]
+    [(and (>= fb format:min-neg-fixint) (<= fb format:max-neg-fixint))
+     (- (add1 (bitwise-and 255 (bitwise-not fb))))]
+    [(eof-object? fb) fb]))
 
-(define (msgpack-unpack bstr #:nil [nil (msgpack-nil)])
+(define (msgpack-unpack bstr)
   (define in (open-input-bytes bstr))
   (msgpack-read in))
